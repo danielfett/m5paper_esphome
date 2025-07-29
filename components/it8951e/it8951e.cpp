@@ -9,6 +9,8 @@ namespace it8951e {
 
 static const char *TAG = "it8951e.display";
 
+static const uint32_t dataPerLoop = 128; // bytes per loop //TODO: maybe more, but 256 breaks
+
 void IT8951ESensor::write_two_byte16(uint16_t type, uint16_t cmd) {
     this->wait_busy();
     this->enable();
@@ -116,12 +118,12 @@ void IT8951ESensor::wait_busy(uint32_t timeout) {
     uint32_t start_time = millis();
     while (1) {
         if (this->busy_pin_->digital_read()) {
-            return;
+            break;
         }
 
         if (millis() - start_time > timeout) {
             ESP_LOGE(TAG, "Pin busy timeout");
-            return;
+            break;
         }
     }
 }
@@ -138,7 +140,7 @@ void IT8951ESensor::check_busy(uint32_t timeout) {
 
         if (millis() - start_time > timeout) {
             ESP_LOGE(TAG, "SPI busy timeout %i", word);
-            return;
+            break;
         }
 
     }
@@ -155,13 +157,6 @@ void IT8951ESensor::update_area(uint16_t x, uint16_t y, uint16_t w,
     y = (y + 3) & 0xFFFC;
 
     this->check_busy();
-
-    if (x + w > this->get_width_internal()) {
-        w = this->get_width_internal() - x;
-    }
-    if (y + h > this->get_height_internal()) {
-        h = this->get_height_internal() - y;
-    }
 
     uint16_t args[7];
     args[0] = x;
@@ -215,7 +210,8 @@ void IT8951ESensor::setup() {
 
     this->busy_pin_->pin_mode(gpio::FLAG_INPUT);
 
-//    this->get_device_info(&(this->device_info_));
+    /* Not reliable, hard-coded in the model device info (same as M5Stack) */
+    //this->get_device_info(&(this->IT8951DevAll[this->model_].devInfo));
     this->dump_config();
 
     this->write_command(IT8951_TCON_SYS_RUN);
@@ -230,13 +226,7 @@ void IT8951ESensor::setup() {
         this->get_vcom();
     }
 
-    ExternalRAMAllocator<uint8_t> buffer_allocator(ExternalRAMAllocator<uint8_t>::ALLOW_FAILURE);
-    this->should_write_buffer_ = buffer_allocator.allocate(this->get_buffer_length_());
-    if (this->should_write_buffer_ == nullptr) {
-        ESP_LOGE(TAG, "Init FAILED.");
-        return;
-    }
-
+    // Allocate display buffer
     this->init_internal_(this->get_buffer_length_());
 
     ESP_LOGCONFIG(TAG, "Init Done.");
@@ -262,44 +252,60 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     this->set_area(x, y, w, h);
 
     uint32_t pos = 0;
-    uint16_t word = 0;
-    for (uint32_t x = 0; x < ((w * h) >> 2); x++) {
-        word = gram[pos] << 8 | gram[pos + 1];
-
-        if (!this->reversed_) {
-            word = 0xFFFF - word;
-        }
+    const uint32_t nbLoop = (((w * h) / dataPerLoop) >> 1) + 1; // plus one loop for the last bytes if not multiple of 256
+    const uint32_t maxPos = (w * h) >> 1; // 2 pixels per byte
+    for (uint32_t i = 0; i < nbLoop; ++i) {
 
         this->enable();
-        this->write_byte16(0);
-        this->write_byte16(word);
+        /* Send data preamble */
+        this->write_byte16(0x0000);
+
+        for (uint8_t j = 0; j < dataPerLoop; ++j) {
+            uint8_t data = gram[pos];
+            if (!this->reversed_) {
+                data = 0xFF - data;
+            }
+            this->transfer_byte(data);
+            ++pos;
+            if (pos >= maxPos) {
+                break; // Avoid overflow
+            }
+        }
+
         this->disable();
-        pos += 2;
     }
 
     this->write_command(IT8951_TCON_LD_IMG_END);
 }
 
 void IT8951ESensor::write_display() {
-    this->write_command(IT8951_TCON_SYS_RUN);
+    if (this->sleep_when_done_) {
+        this->write_command(IT8951_TCON_SYS_RUN);
+    }
     this->write_buffer_to_display(this->min_x, this->min_y, this->max_x, this->max_y, this->buffer_);
     this->update_area(this->min_x, this->min_y, this->max_x, this->max_y, update_mode_e::UPDATE_MODE_DU);   // 2 level
     this->max_x = 0;
     this->max_y = 0;
-    this->min_x = 960;
-    this->min_y = 540;
-    this->write_command(IT8951_TCON_SLEEP);
+    this->min_x = this->IT8951DevAll[this->model_].devInfo.usPanelW;
+    this->min_y = this->IT8951DevAll[this->model_].devInfo.usPanelH;
+    if (this->sleep_when_done_) {
+        this->write_command(IT8951_TCON_SLEEP);
+    }
 }
 
 void IT8951ESensor::write_display_slow() {
-    this->write_command(IT8951_TCON_SYS_RUN);
+    if (this->sleep_when_done_) {
+        this->write_command(IT8951_TCON_SYS_RUN);
+    }
     this->write_buffer_to_display(this->min_x, this->min_y, this->max_x, this->max_y, this->buffer_);
     this->update_area(this->min_x, this->min_y, this->max_x, this->max_y, update_mode_e::UPDATE_MODE_GC16);
     this->max_x = 0;
     this->max_y = 0;
-    this->min_x = 960;
-    this->min_y = 540;
-    this->write_command(IT8951_TCON_SLEEP);
+    this->min_x = this->IT8951DevAll[this->model_].devInfo.usPanelW;
+    this->min_y = this->IT8951DevAll[this->model_].devInfo.usPanelH;
+    if (this->sleep_when_done_) {
+        this->write_command(IT8951_TCON_SLEEP);
+    }
 }
 
 
@@ -312,12 +318,24 @@ void IT8951ESensor::clear(bool init) {
 
     this->set_target_memory_addr(this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL, this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH);
     this->set_area(0, 0, this->get_width_internal(), this->get_height_internal());
-    uint32_t looping = (this->get_width_internal() * this->get_height_internal()) >> 2;
 
-    for (uint32_t x = 0; x < looping; x++) {
+    uint32_t pos = 0;
+    const uint32_t looping = (((this->get_width_internal() * this->get_height_internal()) / dataPerLoop) >> 1) + 1; // plus one loop for the last bytes if not multiple of 256
+    const uint32_t maxPos = (this->get_width_internal() * this->get_height_internal()) >> 1; // 2 pixels per byte
+    for (uint32_t i = 0; i < looping; ++i) {
+
         this->enable();
+        /* Send data preamble */
         this->write_byte16(0x0000);
-        this->write_byte16(0xFFFF);
+
+        for (uint8_t j = 0; j < dataPerLoop; ++j) {
+            this->transfer_byte(0xFF);
+            ++pos;
+            if (pos >= maxPos) {
+                break; // Avoid overflow
+            }
+        }
+
         this->disable();
     }
 
@@ -343,43 +361,39 @@ void IT8951ESensor::update_slow() {
 }
 
 void HOT IT8951ESensor::draw_absolute_pixel_internal(int x, int y, Color color) {
-    if (x >= this->get_width_internal() || y >= this->get_height_internal() || x < 0 || y < 0) {
-        // Removed to avoid too much logging
-        // ESP_LOGE(TAG, "Drawing outside the screen size!");
+    // Fast path: bounds and buffer check first
+    if (x < 0 || y < 0 || this->buffer_ == nullptr || x >= this->get_width_internal() || y >= this->get_height_internal()) {
         return;
     }
 
-    if (this->buffer_ == nullptr) {
-        return;
-    }
-
+    // Track min/max for partial updates
     if (x > this->max_x) {
         this->max_x = x;
     }
-
     if (y > this->max_y) {
         this->max_y = y;
     }
-
     if (x < this->min_x) {
         this->min_x = x;
     }
-
     if (y < this->min_y) {
         this->min_y = y;
     }
 
     uint32_t internal_color = color.raw_32 & 0x0F;
     uint16_t _bytewidth = this->get_width_internal() >> 1;
-    int32_t index = y * _bytewidth + (x >> 1);
 
+    uint32_t index = static_cast<uint32_t>(y) * _bytewidth + (static_cast<uint32_t>(x) >> 1);
+
+    uint8_t &buf = this->buffer_[index];
     if (x & 0x1) {
-        this->buffer_[index] &= 0xF0;
-        this->buffer_[index] |= internal_color;
+        // Odd pixel: lower nibble
+        buf = (buf & 0xF0) | internal_color;
     } else {
-        this->buffer_[index] &= 0x0F;
-        this->buffer_[index] |= internal_color << 4;
+        // Even pixel: upper nibble
+        buf = (buf & 0x0F) | (internal_color << 4);
     }
+    
 }
 
 int IT8951ESensor::get_width_internal() {

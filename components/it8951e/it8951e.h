@@ -130,6 +130,7 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
   void set_reversed(bool reversed) { this->reversed_ = reversed; }
   void set_reset_duration(uint32_t reset_duration) { this->reset_duration_ = reset_duration; }
   void set_model(it8951eModel model) { this->model_ = model; }
+  void set_sleep_when_done(bool sleep_when_done) { this->sleep_when_done_ = sleep_when_done; }
 
   void setup() override;
   void update() override;
@@ -162,7 +163,6 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
     display::DisplayType::DISPLAY_TYPE_GRAYSCALE // .displayType (M5EPD supports 16 gray scale levels)
   };
 
-  uint8_t *should_write_buffer_{nullptr};
   void get_device_info(struct IT8951DevInfo_s *info);
 
   uint32_t max_x = 0;
@@ -175,14 +175,17 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
   GPIOPin *reset_pin_{nullptr};
   GPIOPin *busy_pin_{nullptr};
 
-  bool reversed_ = false;
+  bool reversed_{false};
   uint32_t reset_duration_{100};
+  bool sleep_when_done_{true}; // If true, the display will go to sleep after each update
   enum it8951eModel model_{it8951eModel::M5EPD};
 
   void reset(void);
 
-  void wait_busy(uint32_t timeout = 30);
-  void check_busy(uint32_t timeout = 30);
+  /* 1000ms timeout because I've seen it take up to 750ms (and ~310ms on average)
+   * Mostly for screen sleep and run commands */
+  void wait_busy(uint32_t timeout = 1000);
+  void check_busy(uint32_t timeout = 1000);
 
   uint16_t get_vcom();
   void set_vcom(uint16_t vcom);
