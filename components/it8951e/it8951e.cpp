@@ -9,8 +9,6 @@ namespace it8951e {
 
 static const char *TAG = "it8951e.display";
 
-static const uint32_t dataPerLoop = 128; // bytes per loop //TODO: maybe more, but 256 breaks
-
 void IT8951ESensor::write_two_byte16(uint16_t type, uint16_t cmd) {
     this->wait_busy();
     this->enable();
@@ -252,28 +250,21 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     this->set_area(x, y, w, h);
 
     uint32_t pos = 0;
-    const uint32_t nbLoop = (((w * h) / dataPerLoop) >> 1) + 1; // plus one loop for the last bytes if not multiple of 256
     const uint32_t maxPos = (w * h) >> 1; // 2 pixels per byte
-    for (uint32_t i = 0; i < nbLoop; ++i) {
 
-        this->enable();
-        /* Send data preamble */
-        this->write_byte16(0x0000);
+    this->enable();
+    /* Send data preamble */
+    this->write_byte16(0x0000);
 
-        for (uint8_t j = 0; j < dataPerLoop; ++j) {
-            uint8_t data = gram[pos];
-            if (!this->reversed_) {
-                data = 0xFF - data;
-            }
-            this->transfer_byte(data);
-            ++pos;
-            if (pos >= maxPos) {
-                break; // Avoid overflow
-            }
+    for (uint32_t j = 0; j < maxPos; ++j) {
+        uint8_t data = gram[j];
+        if (!this->reversed_) {
+            data = 0xFF - data;
         }
-
-        this->disable();
+        this->transfer_byte(data);
     }
+
+    this->disable();
 
     this->write_command(IT8951_TCON_LD_IMG_END);
 }
@@ -319,25 +310,17 @@ void IT8951ESensor::clear(bool init) {
     this->set_target_memory_addr(this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL, this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH);
     this->set_area(0, 0, this->get_width_internal(), this->get_height_internal());
 
-    uint32_t pos = 0;
-    const uint32_t looping = (((this->get_width_internal() * this->get_height_internal()) / dataPerLoop) >> 1) + 1; // plus one loop for the last bytes if not multiple of 256
     const uint32_t maxPos = (this->get_width_internal() * this->get_height_internal()) >> 1; // 2 pixels per byte
-    for (uint32_t i = 0; i < looping; ++i) {
 
-        this->enable();
-        /* Send data preamble */
-        this->write_byte16(0x0000);
+    this->enable();
+    /* Send data preamble */
+    this->write_byte16(0x0000);
 
-        for (uint8_t j = 0; j < dataPerLoop; ++j) {
-            this->transfer_byte(0xFF);
-            ++pos;
-            if (pos >= maxPos) {
-                break; // Avoid overflow
-            }
-        }
-
-        this->disable();
+    for (uint32_t j = 0; j < maxPos; ++j) {
+        this->transfer_byte(0xFF);
     }
+
+    this->disable();
 
     this->write_command(IT8951_TCON_LD_IMG_END);
 
