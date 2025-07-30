@@ -14,6 +14,7 @@ from esphome.const import (
     CONF_LAMBDA,
     CONF_MODEL,
     CONF_REVERSED,
+    CONF_SLEEP_WHEN_DONE,
 )
 
 DEPENDENCIES = ['spi']
@@ -46,6 +47,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_MODEL, default="M5EPD"): cv.enum(
                 MODELS, upper=True, space="_"
             ),
+            cv.Optional(CONF_SLEEP_WHEN_DONE, default=True): cv.boolean,
         }
     )
     .extend(cv.polling_component_schema("1s"))
@@ -101,3 +103,5 @@ async def to_code(config):
         cg.add(var.set_reversed(config[CONF_REVERSED]))
     if CONF_RESET_DURATION in config:
         cg.add(var.set_reset_duration(config[CONF_RESET_DURATION]))
+    if CONF_SLEEP_WHEN_DONE in config:
+        cg.add(var.set_sleep_when_done(config[CONF_SLEEP_WHEN_DONE]))
