@@ -113,7 +113,7 @@ void IT8951ESensor::set_area(uint16_t x, uint16_t y, uint16_t w,
 }
 
 void IT8951ESensor::wait_busy(uint32_t timeout) {
-    uint32_t start_time = millis();
+    const uint32_t start_time = millis();
     while (1) {
         if (this->busy_pin_->digital_read()) {
             break;
@@ -127,7 +127,7 @@ void IT8951ESensor::wait_busy(uint32_t timeout) {
 }
 
 void IT8951ESensor::check_busy(uint32_t timeout) {
-    uint32_t start_time = millis();
+    const uint32_t start_time = millis();
     while (1) {
         this->write_command(IT8951_TCON_REG_RD);
         this->write_word(IT8951_LUTAFSR);
@@ -186,7 +186,7 @@ void IT8951ESensor::get_device_info(struct IT8951DevInfo_s *info) {
 uint16_t IT8951ESensor::get_vcom() {
     this->write_command(IT8951_I80_CMD_VCOM); // tcon vcom get command
     this->write_word(0x0000);
-    uint16_t vcom = this->read_word();
+    const uint16_t vcom = this->read_word();
     ESP_LOGI(TAG, "VCOM = %.02fV", (float)vcom/1000);
     return vcom;
 }
@@ -218,7 +218,7 @@ void IT8951ESensor::setup() {
     this->write_reg(IT8951_I80CPCR, 0x0001);
 
     // set vcom to -2.30v
-    uint16_t vcom = this->get_vcom();
+    const uint16_t vcom = this->get_vcom();
     if (2300 != vcom) {
         this->set_vcom(2300);
         this->get_vcom();
@@ -256,8 +256,8 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     /* Send data preamble */
     this->write_byte16(0x0000);
 
-    for (uint32_t j = 0; j < maxPos; ++j) {
-        uint8_t data = gram[j];
+    for (uint32_t i = 0; i < maxPos; ++i) {
+        uint8_t data = gram[i];
         if (!this->reversed_) {
             data = 0xFF - data;
         }
@@ -316,7 +316,7 @@ void IT8951ESensor::clear(bool init) {
     /* Send data preamble */
     this->write_byte16(0x0000);
 
-    for (uint32_t j = 0; j < maxPos; ++j) {
+    for (uint32_t i = 0; i < maxPos; ++i) {
         this->transfer_byte(0xFF);
     }
 
@@ -345,7 +345,7 @@ void IT8951ESensor::update_slow() {
 
 void HOT IT8951ESensor::draw_absolute_pixel_internal(int x, int y, Color color) {
     // Fast path: bounds and buffer check first
-    if (x < 0 || y < 0 || this->buffer_ == nullptr || x >= this->get_width_internal() || y >= this->get_height_internal()) {
+    if (x < 0 || y < 0 || this->buffer_ == nullptr || x >= this->usPanelW_ || y >= this->usPanelH_) {
         return;
     }
 
@@ -364,7 +364,7 @@ void HOT IT8951ESensor::draw_absolute_pixel_internal(int x, int y, Color color) 
     }
 
     uint32_t internal_color = color.raw_32 & 0x0F;
-    uint16_t _bytewidth = this->get_width_internal() >> 1;
+    uint16_t _bytewidth = this->usPanelW_ >> 1;
 
     uint32_t index = static_cast<uint32_t>(y) * _bytewidth + (static_cast<uint32_t>(x) >> 1);
 
@@ -379,12 +379,11 @@ void HOT IT8951ESensor::draw_absolute_pixel_internal(int x, int y, Color color) 
     
 }
 
-int IT8951ESensor::get_width_internal() {
-    return this->IT8951DevAll[this->model_].devInfo.usPanelW;
-}
-
-int IT8951ESensor::get_height_internal() {
-    return this->IT8951DevAll[this->model_].devInfo.usPanelH;
+void IT8951ESensor::set_model(it8951eModel model) {
+    this->model_ = model;
+    // Provide fast access to panel width and height
+    usPanelW_ = IT8951DevAll[model].devInfo.usPanelW;
+    usPanelH_ = IT8951DevAll[model].devInfo.usPanelH;
 }
 
 void IT8951ESensor::dump_config() {
@@ -397,10 +396,12 @@ void IT8951ESensor::dump_config() {
         ESP_LOGCONFIG(TAG, "  Model: unkown");
         break;
     }
-    ESP_LOGCONFIG(TAG, "LUT: %s, FW: %s, Mem:%x",
+    ESP_LOGCONFIG(TAG, "LUT: %s, FW: %s, Mem:%x (%d x %d)",
         this->IT8951DevAll[this->model_].devInfo.usLUTVersion,
         this->IT8951DevAll[this->model_].devInfo.usFWVersion,
-        this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL | (this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH << 16)
+        this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL | (this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH << 16),
+        this->IT8951DevAll[this->model_].devInfo.usPanelW,
+        this->IT8951DevAll[this->model_].devInfo.usPanelH
     );
 }
 
