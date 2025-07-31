@@ -345,7 +345,7 @@ void IT8951ESensor::update_slow() {
 
 void IT8951ESensor::fill(Color color) {
     for (uint32_t i = 0; i < this->get_buffer_length_(); i++) {
-        this->buffer_[i] = 0xFF;
+        this->buffer_[i] = 0x00;
     }
     this->max_x = this->get_width_internal() - 1;
     this->max_y = this->get_height_internal() - 1;
