@@ -253,22 +253,29 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     this->set_target_memory_addr(this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL, this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH);
     this->set_area(x, y, w, h);
 
-    const uint16_t bytewidth = this->usPanelW_ >> 1; // bytes per row (2 pixels per byte)
+    const uint16_t panel_bytewidth = this->usPanelW_ >> 1; // bytes per row on the panel (2 pixels per byte)
+    const uint16_t gram_bytewidth = (w + 1) >> 1; // bytes per row in the gram buffer for the update area
 
     this->enable();
     /* Send data preamble */
     this->write_byte16(0x0000);
 
+    // Allocate a buffer for one row of pixel data
+    ExternalRAMAllocator<uint8_t> allocator(ExternalRAMAllocator<uint8_t>::ALLOW_FAILURE);
+    uint8_t *row_buffer = allocator.allocate(gram_bytewidth);
+    if (row_buffer == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate row buffer for display update.");
+        this->disable();
+        return;
+    }
+
     for (uint32_t row = 0; row < h; ++row) {
-        for (uint32_t col = 0; col < w; col += 2) {
-            // Calculate buffer index for packed 4bpp (2 pixels per byte)
-            uint32_t buf_index = (y + row) * bytewidth + ((x + col) >> 1);
-            uint8_t data = gram[buf_index];
-            if (!this->reversed_) {
-                data = 0xFF - data;
-            }
-            this->transfer_byte(data);
+        uint32_t buf_start_index = (y + row) * panel_bytewidth + (x >> 1);
+        memcpy(row_buffer, &gram[buf_start_index], gram_bytewidth);
+        if (!this->reversed_) {
+            for(uint16_t i = 0; i < gram_bytewidth; i++) row_buffer[i] = 0xFF - row_buffer[i];
         }
+        this->transfer_array(row_buffer, gram_bytewidth);
     }
 
     this->disable();
@@ -389,7 +396,7 @@ void HOT IT8951ESensor::draw_pixel_at(int x, int y, Color color) {
     this->draw_absolute_pixel_internal(x, y, color);
 
     // Removed compare to original function to speed up drawing
-    // App.feed_wdt();
+    App.feed_wdt();
 }
 
 void HOT IT8951ESensor::draw_absolute_pixel_internal(int x, int y, Color color) {
