@@ -189,8 +189,8 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
 
   /* 1000ms timeout because I've seen it take up to 750ms (and ~310ms on average)
    * Mostly for screen sleep and run commands */
-  void wait_busy(uint32_t timeout = 1000);
-  void check_busy(uint32_t timeout = 1000);
+  void wait_busy(uint32_t timeout = 800);
+  void check_busy(uint32_t timeout = 800);
 
   uint16_t get_vcom();
   void set_vcom(uint16_t vcom);

@@ -39,33 +39,24 @@ uint16_t IT8951ESensor::read_word() {
 }
 
 void IT8951ESensor::read_words(void *buf, uint32_t length) {
-    ExternalRAMAllocator<uint16_t> allocator(ExternalRAMAllocator<uint16_t>::ALLOW_FAILURE);
-    uint16_t *buffer = allocator.allocate(length);
-    if (buffer == nullptr) {
-        ESP_LOGE(TAG, "Read FAILED to allocate.");
-        return;
-    }
-
     this->wait_busy();
     this->enable();
     this->write_byte16(0x1000);
     this->wait_busy();
-
+ 
     // dummy
     this->write_byte16(0x0000);
     this->wait_busy();
-
-    for (size_t i = 0; i < length; i++) {
-        uint8_t recv[2];
-        this->read_array(recv, sizeof(recv));
-        buffer[i] = encode_uint16(recv[0], recv[1]);
+ 
+    // Read all words in a single transaction
+    this->read_array(static_cast<uint8_t *>(buf), length * 2);
+ 
+    // The IT8951 returns data in big-endian format. Swap bytes if the MCU is little-endian.
+    for (uint32_t i = 0; i < length; i++) {
+        static_cast<uint16_t *>(buf)[i] = __builtin_bswap16(static_cast<uint16_t *>(buf)[i]);
     }
-
+ 
     this->disable();
-
-    memcpy(buf, buffer, length);
-
-    allocator.deallocate(buffer, length);
 }
 
 void IT8951ESensor:: write_command(uint16_t cmd) {
@@ -121,6 +112,7 @@ void IT8951ESensor::wait_busy(uint32_t timeout) {
 
         if (millis() - start_time > timeout) {
             ESP_LOGE(TAG, "Pin busy timeout");
+            this->mark_failed();
             break;
         }
     }
@@ -138,7 +130,7 @@ void IT8951ESensor::check_busy(uint32_t timeout) {
 
         if (millis() - start_time > timeout) {
             ESP_LOGE(TAG, "SPI busy timeout %i", word);
-            break;
+            this->mark_failed();
         }
 
     }
@@ -206,7 +198,7 @@ void IT8951ESensor::setup() {
         this->reset();
     }
 
-    this->busy_pin_->pin_mode(gpio::FLAG_INPUT);
+    this->busy_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
 
     /* Not reliable, hard-coded in the model device info (same as M5Stack) */
     //this->get_device_info(&(this->IT8951DevAll[this->model_].devInfo));
@@ -330,15 +322,28 @@ void IT8951ESensor::clear(bool init) {
     this->set_target_memory_addr(this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL, this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH);
     this->set_area(0, 0, this->get_width_internal(), this->get_height_internal());
 
-    const uint32_t maxPos = (this->get_width_internal() * this->get_height_internal()) >> 1; // 2 pixels per byte
+    const uint16_t bytewidth = this->get_width_internal() >> 1;
+    const uint16_t buffer_size = 1024; // Use a 1KB buffer for clearing
+    const uint32_t total_bytes = (uint32_t) bytewidth * this->get_height_internal();
+
+    ExternalRAMAllocator<uint8_t> allocator(ExternalRAMAllocator<uint8_t>::ALLOW_FAILURE);
+    uint8_t *buffer = allocator.allocate(buffer_size);
+    if (buffer == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate buffer for clear().");
+        return;
+    }
+    memset(buffer, 0xFF, buffer_size);
 
     this->enable();
     /* Send data preamble */
     this->write_byte16(0x0000);
 
-    for (uint32_t i = 0; i < maxPos; ++i) {
-        this->transfer_byte(0xFF);
+    for (uint32_t i = 0; i < total_bytes; i += buffer_size) {
+        uint32_t chunk_size = std::min((uint32_t) buffer_size, total_bytes - i);
+        this->transfer_array(buffer, chunk_size);
     }
+
+    allocator.deallocate(buffer, buffer_size);
 
     this->disable();
 
