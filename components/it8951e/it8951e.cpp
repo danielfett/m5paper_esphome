@@ -379,28 +379,81 @@ void IT8951ESensor::fill(Color color) {
 }
 
 void HOT IT8951ESensor::draw_pixel_at(int x, int y, Color color) {
-    if (!Display::get_clipping().inside(x, y))
-    return;  // NOLINT
+    // This is called by the base class with pre-rotated coordinates.
+    display::DisplayBuffer::draw_pixel_at(x, y, color);
+}
 
-    switch (this->rotation_) {
-    case esphome::display::DisplayRotation::DISPLAY_ROTATION_0_DEGREES:
-        break;
-    case esphome::display::DisplayRotation::DISPLAY_ROTATION_90_DEGREES:
-        std::swap(x, y);
-        x = this->usPanelW_ - x - 1;
-        break;
-    case esphome::display::DisplayRotation::DISPLAY_ROTATION_180_DEGREES:
-        x = this->usPanelW_ - x - 1;
-        y = this->usPanelH_ - y - 1;
-        break;
-    case esphome::display::DisplayRotation::DISPLAY_ROTATION_270_DEGREES:
-        std::swap(x, y);
-        y = this->usPanelH_ - y - 1;
-        break;
+void IT8951ESensor::xdraw_pixels_at(int x_start, int y_start, int width, int height, const uint8_t *image,
+                                   display::ColorOrder color_order, display::ColorBitness bitness, bool big_endian,
+                                   int x_offset, int y_offset, int x_stride) {
+
+    if (bitness != display::COLOR_BITNESS_565 || color_order != display::COLOR_ORDER_RGB) {
+        // Fallback to slow method if format is not what we expect from LVGL
+        display::DisplayBuffer::draw_pixels_at(x_start, y_start, width, height, image, color_order, bitness,
+                                               big_endian, x_offset, y_offset, x_stride);
+        return;
     }
-    this->draw_absolute_pixel_internal(x, y, color);
 
-    // Removed compare to original function to speed up drawing
+    // Clip to display bounds
+    int x1 = std::max(0, x_start);
+    int y1 = std::max(0, y_start);
+    int x2 = std::min(this->get_width(), x_start + width);
+    int y2 = std::min(this->get_height(), y_start + height);
+
+    if (x1 >= x2 || y1 >= y2) {
+        return;
+    }
+
+    // Update dirty area
+    if (this->min_x > x1) this->min_x = x1; // These are un-rotated coordinates
+    if (this->min_y > y1) this->min_y = y1;
+    if (this->max_x < x2 - 1) this->max_x = x2 - 1;
+    if (this->max_y < y2 - 1) this->max_y = y2 - 1;
+
+    const uint16_t *image16 = reinterpret_cast<const uint16_t *>(image);
+    const int image_stride = x_stride / 2;
+
+    for (int y = y1; y < y2; y++) {
+        for (int x = x1; x < x2; x++) {
+            int src_x = x - x_start + x_offset;
+            int src_y = y - y_start + y_offset;
+            uint16_t color16 = image16[src_y * image_stride + src_x];
+            if (big_endian) {
+                color16 = __builtin_bswap16(color16);
+            }
+
+            // Convert 565 RGB to 8-bit grayscale
+            uint8_t r = (color16 & 0xF800) >> 8; // r is 5 bits, shift to top of 8 bits
+            uint8_t g = (color16 & 0x07E0) >> 3; // g is 6 bits, shift to top of 8 bits
+            uint8_t b = (color16 & 0x001F) << 3; // b is 5 bits, shift to top of 8 bits
+            uint8_t gray8 = (r * 77 + g * 150 + b * 29) >> 8;
+
+            // Convert 8-bit gray to 4-bit gray
+            uint8_t gray4bit = gray8 >> 4;
+
+            int rotated_x = x;
+            int rotated_y = y;
+
+            switch (this->rotation_) {
+                case display::DISPLAY_ROTATION_90_DEGREES:
+                    std::swap(rotated_x, rotated_y);
+                    rotated_x = this->get_width_internal() - rotated_x - 1;
+                    break;
+                case display::DISPLAY_ROTATION_180_DEGREES:
+                    rotated_x = this->get_width_internal() - rotated_x - 1;
+                    rotated_y = this->get_height_internal() - rotated_y - 1;
+                    break;
+                case display::DISPLAY_ROTATION_270_DEGREES:
+                    std::swap(rotated_x, rotated_y);
+                    rotated_y = this->get_height_internal() - rotated_y - 1;
+                    break;
+                case display::DISPLAY_ROTATION_0_DEGREES:
+                default:
+                    break;
+            }
+            this->draw_absolute_pixel_internal(rotated_x, rotated_y, Color(gray4bit));
+        }
+    }
     App.feed_wdt();
 }
 

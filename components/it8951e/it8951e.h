@@ -144,6 +144,9 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
   void fill(Color color) override;
   void draw_pixel_at(int x, int y, Color color) override;
 
+  void xdraw_pixels_at(int x_start, int y_start, int width, int height, const uint8_t *image,
+                      display::ColorOrder color_order, display::ColorBitness bitness, bool big_endian,
+                      int x_offset, int y_offset, int x_stride);// override;
  protected:
   void draw_absolute_pixel_internal(int x, int y, Color color) override;
 
