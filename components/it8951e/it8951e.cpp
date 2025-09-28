@@ -468,37 +468,45 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
     const uint16_t panel_bytewidth = this->usPanelW_ >> 1;
     size_t line_stride = x_offset + w + x_pad;  // length of each source line in pixels
 
-    for (int y = 0; y < h; y++) {
-        const uint16_t *src_addr = (const uint16_t *)(ptr + (((y_offset + y) * line_stride) + x_offset) * 2);
-        uint8_t *dst_addr = this->buffer_ + ((y_start + y) * panel_bytewidth) + (x_start / 2);
+    if (big_endian) {
+        for (int y = 0; y < h; y++) {
+            const uint16_t *src_addr = (const uint16_t *)(ptr + (((y_offset + y) * line_stride) + x_offset) * 2);
+            uint8_t *dst_addr = this->buffer_ + ((y_start + y) * panel_bytewidth) + (x_start / 2);
+            for (int x = 0; x < w; x += 2) {
+                uint16_t color1 = __builtin_bswap16(src_addr[x]);
+                uint16_t lum1 = R_LUMINANCE_LUT[(color1 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color1 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color1 & 0x001F];
+                uint8_t gray1 = (lum1 >> 12) > 7 ? 0x0 : 0xF;
 
-        for (int x = 0; x < w; x += 2) {
-            // Process pixel 1 (even)
-            uint16_t color16_1 = src_addr[x];
-            if (big_endian) {
-                color16_1 = __builtin_bswap16(color16_1);
-            }
-            uint16_t lum = R_LUMINANCE_LUT[(color16_1 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color16_1 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color16_1 & 0x001F];
-            uint8_t gray4_1 = (lum >> 12) > 7 ? 0x0 : 0xF;
-
-            uint8_t gray4_2 = gray4_1; // Default for odd width
-            if (x + 1 < w) {
-                // Process pixel 2 (odd)
-                uint16_t color16_2 = src_addr[x + 1];
-                if (big_endian) {
-                    color16_2 = __builtin_bswap16(color16_2);
+                uint8_t gray2 = gray1;
+                if (x + 1 < w) {
+                    uint16_t color2 = __builtin_bswap16(src_addr[x + 1]);
+                    uint16_t lum2 = R_LUMINANCE_LUT[(color2 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color2 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color2 & 0x001F];
+                    gray2 = (lum2 >> 12) > 7 ? 0x0 : 0xF;
                 }
-                lum = R_LUMINANCE_LUT[(color16_2 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color16_2 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color16_2 & 0x001F];
-                gray4_2 = (lum >> 12) > 7 ? 0x0 : 0xF;
+                *dst_addr++ = (gray1 << 4) | gray2;
             }
+        }
+    } else {
+        for (int y = 0; y < h; y++) {
+            const uint16_t *src_addr = (const uint16_t *)(ptr + (((y_offset + y) * line_stride) + x_offset) * 2);
+            uint8_t *dst_addr = this->buffer_ + ((y_start + y) * panel_bytewidth) + (x_start / 2);
+            for (int x = 0; x < w; x += 2) {
+                uint16_t color1 = src_addr[x];
+                uint16_t lum1 = R_LUMINANCE_LUT[(color1 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color1 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color1 & 0x001F];
+                uint8_t gray1 = (lum1 >> 12) > 7 ? 0x0 : 0xF;
 
-            // Combine two 4-bit pixels into one byte and write
-            *dst_addr = (gray4_1 << 4) | gray4_2;
-            dst_addr++;
+                uint8_t gray2 = gray1;
+                if (x + 1 < w) {
+                    uint16_t color2 = src_addr[x + 1];
+                    uint16_t lum2 = R_LUMINANCE_LUT[(color2 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color2 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color2 & 0x001F];
+                    gray2 = (lum2 >> 12) > 7 ? 0x0 : 0xF;
+                }
+                *dst_addr++ = (gray1 << 4) | gray2;
+            }
         }
     }
     App.feed_wdt();
-    this->update();
+    //this->update();
 }
 
 void HOT IT8951ESensor::draw_absolute_pixel_internal(int x, int y, Color color) {
