@@ -498,6 +498,7 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
         }
     }
     App.feed_wdt();
+    this->update();
 }
 
 void HOT IT8951ESensor::draw_absolute_pixel_internal(int x, int y, Color color) {
