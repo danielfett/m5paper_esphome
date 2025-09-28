@@ -265,12 +265,12 @@ void IT8951ESensor::setup() {
 /** @brief Write the image at the specified location, Partial update
  * @param x Update X coordinate, >>> Must be a multiple of 4 <<<
  * @param y Update Y coordinate
- * @param w width of gram, >>> Must be a multiple of 4 <<<
- * @param h height of gram
- * @param gram 4bpp gram data
+ * @param w width of update area, >>> Must be a multiple of 4 <<<
+ * @param h height of update area
+ * @param buffer 4bpp buffer data
  */
 void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
-                                            uint16_t h, const uint8_t *gram) {
+                                            uint16_t h) {
 
     ESP_LOGV(TAG, "Writing buffer to display; x=%d, y=%d, w=%d, h=%d", x, y, w, h);
     this->m_endian_type = IT8951_LDIMG_B_ENDIAN;
@@ -283,13 +283,15 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     // rounded up to be multiple of 4
     x = (x + 3) & 0xFFFC;
     y = (y + 3) & 0xFFFC;
+    w = (w + 3) & 0xFFFC;
+
     ESP_LOGV(TAG, "---- actual values:        x=%d, y=%d, w=%d, h=%d", x, y, w, h);
 
     this->set_target_memory_addr(this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL, this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH);
     this->set_area(x, y, w, h);
 
     const uint16_t panel_bytewidth = this->usPanelW_ >> 1; // bytes per row on the panel (2 pixels per byte)
-    const uint16_t update_bytewidth = (w + 1) >> 1; // bytes per row for the update area
+    const uint16_t update_bytewidth = w >> 1; // bytes per row for the update area
 
     ESP_LOGV(TAG, "---- writing in rows of length: %d bytes", update_bytewidth);
 
@@ -307,7 +309,7 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     }
 
     for (uint16_t row = 0; row < h; ++row) {
-        const uint8_t *gram_row_start = &gram[((y + row) * panel_bytewidth) + (x >> 1)];
+        const uint8_t *gram_row_start = &this->buffer_[((y + row) * panel_bytewidth) + (x >> 1)];
         memcpy(row_buffer, gram_row_start, update_bytewidth);
         if (this->reversed_) {
             for(uint16_t i = 0; i < update_bytewidth; i++) {
@@ -335,7 +337,7 @@ void IT8951ESensor::write_display() {
     }
     const u_int32_t width = this->max_x - this->min_x + 1;
     const u_int32_t height = this->max_y - this->min_y + 1;
-    this->write_buffer_to_display(this->min_x, this->min_y, width, height, this->buffer_);
+    this->write_buffer_to_display(this->min_x, this->min_y, width, height);
     this->update_area(this->min_x, this->min_y, width, height, update_mode_e::UPDATE_MODE_DU);   // 2 level
     this->max_x = 0;
     this->max_y = 0;
@@ -352,7 +354,7 @@ void IT8951ESensor::write_display_slow() {
     }
     const uint16_t width = this->usPanelW_;
     const uint16_t height = this->usPanelH_;
-    this->write_buffer_to_display(0, 0, width, height, this->buffer_);
+    this->write_buffer_to_display(0, 0, width, height);
     this->update_area(0, 0, width, height, update_mode_e::UPDATE_MODE_GC16);
     this->max_x = 0;
     this->max_y = 0;

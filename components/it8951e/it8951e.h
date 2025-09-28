@@ -216,7 +216,7 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
 
 
   void write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
-                                uint16_t h, const uint8_t *gram);
+                                uint16_t h);
   void write_display();
   void write_display_slow();
 };
