@@ -283,12 +283,15 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     // rounded up to be multiple of 4
     x = (x + 3) & 0xFFFC;
     y = (y + 3) & 0xFFFC;
+    ESP_LOGV(TAG, "---- actual values:        x=%d, y=%d, w=%d, h=%d", x, y, w, h);
 
     this->set_target_memory_addr(this->IT8951DevAll[this->model_].devInfo.usImgBufAddrL, this->IT8951DevAll[this->model_].devInfo.usImgBufAddrH);
     this->set_area(x, y, w, h);
 
     const uint16_t panel_bytewidth = this->usPanelW_ >> 1; // bytes per row on the panel (2 pixels per byte)
-    const uint16_t gram_bytewidth = (w + 1) >> 1; // bytes per row in the gram buffer for the update area
+    const uint16_t update_bytewidth = (w + 1) >> 1; // bytes per row for the update area
+
+    ESP_LOGV(TAG, "---- writing in rows of length: %d bytes", update_bytewidth);
 
     this->enable();
     /* Send data preamble */
@@ -296,22 +299,25 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
 
     // Allocate a buffer for one row of pixel data
     ExternalRAMAllocator<uint8_t> allocator(ExternalRAMAllocator<uint8_t>::ALLOW_FAILURE);
-    uint8_t *row_buffer = allocator.allocate(gram_bytewidth);
+    uint8_t *row_buffer = allocator.allocate(update_bytewidth);
     if (row_buffer == nullptr) {
         ESP_LOGE(TAG, "Failed to allocate row buffer for display update.");
         this->disable();
         return;
     }
 
-    for (uint32_t row = 0; row < h; ++row) {
-        uint32_t buf_start_index = (y + row) * panel_bytewidth + (x >> 1);
-        memcpy(row_buffer, &gram[buf_start_index], gram_bytewidth);
+    for (uint16_t row = 0; row < h; ++row) {
+        const uint8_t *gram_row_start = &gram[((y + row) * panel_bytewidth) + (x >> 1)];
+        memcpy(row_buffer, gram_row_start, update_bytewidth);
         if (this->reversed_) {
-            for(uint16_t i = 0; i < gram_bytewidth; i++) row_buffer[i] = 0xFF - row_buffer[i];
+            for(uint16_t i = 0; i < update_bytewidth; i++) {
+                row_buffer[i] = 0xFF - row_buffer[i];
+            }
         }
-        this->transfer_array(row_buffer, gram_bytewidth);
+        this->transfer_array(row_buffer, update_bytewidth);
     }
 
+    allocator.deallocate(row_buffer, update_bytewidth);
     this->disable();
 
     this->write_command(IT8951_TCON_LD_IMG_END);
@@ -382,7 +388,7 @@ void IT8951ESensor::clear(bool init) {
         ESP_LOGE(TAG, "Failed to allocate buffer for clear().");
         return;
     }
-    memset(buffer, 0xFF, buffer_size);
+    memset(buffer, 0x00, buffer_size);
 
     this->enable();
     /* Send data preamble */
