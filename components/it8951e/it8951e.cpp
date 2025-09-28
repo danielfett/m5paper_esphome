@@ -9,6 +9,23 @@ namespace it8951e {
 
 static const char *TAG = "it8951e.display";
 
+// Pre-calculated luminance lookup tables for RGB565 to Grayscale conversion.
+// This avoids expensive multiplication in the tight pixel loop.
+// Y = (R * 2126 + G * 7152 + B * 722) / 10000
+// R is 5 bits (0-31), G is 6 bits (0-63), B is 5 bits (0-31).
+// The values are scaled by 256 for integer arithmetic.
+static const uint16_t R_LUMINANCE_LUT[32] = {
+    0,   544,  1088,  1632,  2176,  2720,  3264,  3808,  4352,  4896,  5440,  5984,  6528,  7072,  7616,  8160,
+    8704, 9248, 9792, 10336, 10880, 11424, 11968, 12512, 13056, 13600, 14144, 14688, 15232, 15776, 16320, 16864};
+static const uint16_t G_LUMINANCE_LUT[64] = {
+    0,    286,  572,   858,   1144,  1430,  1716,  2002,  2288,  2574,  2860,  3146,  3432,  3718,  4004,  4290,
+    4576, 4862, 5148,  5434,  5720,  6006,  6292,  6578,  6864,  7150,  7436,  7722,  8008,  8294,  8580,  8866,
+    9152, 9438, 9724,  10010, 10296, 10582, 10868, 11154, 11440, 11726, 12012, 12298, 12584, 12870, 13156, 13442,
+    13728, 14014, 14300, 14586, 14872, 15158, 15444, 15730, 16016, 16302, 16588, 16874, 17160, 17446, 17732, 18018};
+static const uint16_t B_LUMINANCE_LUT[32] = {
+    0,  184,  368,  552,  736,  920,  1104, 1288, 1472, 1656, 1840, 2024, 2208, 2392, 2576, 2760,
+    2944, 3128, 3312, 3496, 3680, 3864, 4048, 4232, 4416, 4600, 4784, 4968, 5152, 5336, 5520, 5704};
+
 void IT8951ESensor::write_two_byte16(uint16_t type, uint16_t cmd) {
     this->wait_busy();
     this->enable();
@@ -313,7 +330,7 @@ void IT8951ESensor::write_display() {
     const u_int32_t width = this->max_x - this->min_x + 1;
     const u_int32_t height = this->max_y - this->min_y + 1;
     this->write_buffer_to_display(this->min_x, this->min_y, width, height, this->buffer_);
-    this->update_area(this->min_x, this->min_y, width, height, update_mode_e::UPDATE_MODE_A2);   // 2 level
+    this->update_area(this->min_x, this->min_y, width, height, update_mode_e::UPDATE_MODE_DU);   // 2 level
     this->max_x = 0;
     this->max_y = 0;
     this->min_x = this->IT8951DevAll[this->model_].devInfo.usPanelW;
@@ -324,19 +341,13 @@ void IT8951ESensor::write_display() {
 }
 
 void IT8951ESensor::write_display_slow() {
-    // If min > max, then there is no update
-    if (this->min_x >= this->max_x || this->min_y >= this->max_y) {
-        ESP_LOGV(TAG, "No update required, skipping write_display_slow");
-        return;
-    }
-
     if (this->sleep_when_done_) {
         this->write_command(IT8951_TCON_SYS_RUN);
     }
-    const u_int32_t width = this->max_x - this->min_x + 1;
-    const u_int32_t height = this->max_y - this->min_y + 1;
-    this->write_buffer_to_display(this->min_x, this->min_y, width, height, this->buffer_);
-    this->update_area(this->min_x, this->min_y, width, height, update_mode_e::UPDATE_MODE_GC16);
+    const uint16_t width = this->usPanelW_;
+    const uint16_t height = this->usPanelH_;
+    this->write_buffer_to_display(0, 0, width, height, this->buffer_);
+    this->update_area(0, 0, width, height, update_mode_e::UPDATE_MODE_GC16);
     this->max_x = 0;
     this->max_y = 0;
     this->min_x = this->IT8951DevAll[this->model_].devInfo.usPanelW;
@@ -457,11 +468,8 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
             if (big_endian) {
                 color16_1 = __builtin_bswap16(color16_1);
             }
-            uint8_t r1 = (color16_1 & 0xF800) >> 11;
-            uint8_t g1 = (color16_1 & 0x07E0) >> 5;
-            uint8_t b1 = (color16_1 & 0x001F);
-            // Convert to 4-bit grayscale, then threshold to black (0) or white (15)
-            uint8_t gray4_1 = ((r1 * 2126 + g1 * 7152 + b1 * 722) >> 12) > 7 ? 0xF : 0x0;
+            uint16_t lum = R_LUMINANCE_LUT[(color16_1 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color16_1 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color16_1 & 0x001F];
+            uint8_t gray4_1 = (lum >> 12) > 7 ? 0xF : 0x0;
 
             uint8_t gray4_2 = gray4_1; // Default for odd width
             if (x + 1 < w) {
@@ -470,10 +478,8 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
                 if (big_endian) {
                     color16_2 = __builtin_bswap16(color16_2);
                 }
-                uint8_t r2 = (color16_2 & 0xF800) >> 11;
-                uint8_t g2 = (color16_2 & 0x07E0) >> 5;
-                uint8_t b2 = (color16_2 & 0x001F);
-                gray4_2 = ((r2 * 2126 + g2 * 7152 + b2 * 722) >> 12) > 7 ? 0xF : 0x0;
+                lum = R_LUMINANCE_LUT[(color16_2 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color16_2 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color16_2 & 0x001F];
+                gray4_2 = (lum >> 12) > 7 ? 0xF : 0x0;
             }
 
             // Combine two 4-bit pixels into one byte and write
