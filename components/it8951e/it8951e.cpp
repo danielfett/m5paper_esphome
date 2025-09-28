@@ -105,35 +105,56 @@ void IT8951ESensor::set_area(uint16_t x, uint16_t y, uint16_t w,
 
 void IT8951ESensor::wait_busy(uint32_t timeout) {
     const uint32_t start_time = millis();
-    while (1) {
+    uint32_t last_wdt_feed = start_time;
+    while (true) {
         if (this->busy_pin_->digital_read()) {
             break;
         }
 
         if (millis() - start_time > timeout) {
-            ESP_LOGE(TAG, "Pin busy timeout");
+            ESP_LOGE(TAG, "Pin busy timeout after %ums", millis() - start_time);
             this->mark_failed();
             break;
         }
+        if (millis() - last_wdt_feed > 250) {
+            ESP_LOGD(TAG, "Waiting for pin busy, feeding WDT...");
+            App.feed_wdt();
+            last_wdt_feed = millis();
+        }
+        delay(2);  // Yield to other tasks
     }
+    if (millis() - start_time > 1) {
+        ESP_LOGD(TAG, "Busy wait took %dms", millis() - start_time);
+    }    
 }
 
 void IT8951ESensor::check_busy(uint32_t timeout) {
     const uint32_t start_time = millis();
-    while (1) {
+    uint32_t last_wdt_feed = start_time;
+    while (true) {
         this->write_command(IT8951_TCON_REG_RD);
         this->write_word(IT8951_LUTAFSR);
         uint16_t word = this->read_word();
         if (word == 0) {
             break;
         }
-
+ 
         if (millis() - start_time > timeout) {
             ESP_LOGE(TAG, "SPI busy timeout %i", word);
             this->mark_failed();
+            break;
         }
-
+        if (millis() - last_wdt_feed > 250) {
+            ESP_LOGD(TAG, "Waiting for SPI busy, feeding WDT...");
+            App.feed_wdt();
+            last_wdt_feed = millis();
+        }
+        delay(2); // Yield to other tasks
     }
+
+    if (millis() - start_time > 1) {
+        ESP_LOGD(TAG, "SPI busy wait took %dms", millis() - start_time);
+    }    
 }
 
 void IT8951ESensor::update_area(uint16_t x, uint16_t y, uint16_t w,
@@ -141,6 +162,8 @@ void IT8951ESensor::update_area(uint16_t x, uint16_t y, uint16_t w,
     if (mode == update_mode_e::UPDATE_MODE_NONE) {
         return;
     }
+
+    ESP_LOGV(TAG, "sending update area command");
 
     // rounded up to be multiple of 4
     x = (x + 3) & 0xFFFC;
@@ -231,6 +254,8 @@ void IT8951ESensor::setup() {
  */
 void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
                                             uint16_t h, const uint8_t *gram) {
+
+    ESP_LOGV(TAG, "Writing buffer to display; x=%d, y=%d, w=%d, h=%d", x, y, w, h);
     this->m_endian_type = IT8951_LDIMG_B_ENDIAN;
     this->m_pix_bpp     = IT8951_4BPP;
     if (x > this->get_width() || y > this->get_height()) {
@@ -276,13 +301,19 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
 }
 
 void IT8951ESensor::write_display() {
+    // If min > max, then there is no update
+    if (this->min_x >= this->max_x || this->min_y >= this->max_y) {
+        ESP_LOGV(TAG, "No update required, skipping write_display");
+        return;
+    }
+
     if (this->sleep_when_done_) {
         this->write_command(IT8951_TCON_SYS_RUN);
     }
     const u_int32_t width = this->max_x - this->min_x + 1;
     const u_int32_t height = this->max_y - this->min_y + 1;
     this->write_buffer_to_display(this->min_x, this->min_y, width, height, this->buffer_);
-    this->update_area(this->min_x, this->min_y, width, height, update_mode_e::UPDATE_MODE_DU);   // 2 level
+    this->update_area(this->min_x, this->min_y, width, height, update_mode_e::UPDATE_MODE_A2);   // 2 level
     this->max_x = 0;
     this->max_y = 0;
     this->min_x = this->IT8951DevAll[this->model_].devInfo.usPanelW;
@@ -293,6 +324,12 @@ void IT8951ESensor::write_display() {
 }
 
 void IT8951ESensor::write_display_slow() {
+    // If min > max, then there is no update
+    if (this->min_x >= this->max_x || this->min_y >= this->max_y) {
+        ESP_LOGV(TAG, "No update required, skipping write_display_slow");
+        return;
+    }
+
     if (this->sleep_when_done_) {
         this->write_command(IT8951_TCON_SYS_RUN);
     }
@@ -316,6 +353,8 @@ void IT8951ESensor::write_display_slow() {
 void IT8951ESensor::clear(bool init) {
     this->m_endian_type = IT8951_LDIMG_L_ENDIAN;
     this->m_pix_bpp     = IT8951_4BPP;
+
+    ESP_LOGE(TAG, "Clearing display");
 
     Display::clear();
 
@@ -355,6 +394,8 @@ void IT8951ESensor::clear(bool init) {
 }
 
 void IT8951ESensor::update() {
+
+    ESP_LOGV(TAG, "update called");
     if (this->is_ready()) {
         this->do_update_();
         this->write_display();
@@ -362,6 +403,7 @@ void IT8951ESensor::update() {
 }
 
 void IT8951ESensor::update_slow() {
+    ESP_LOGV(TAG, "update_slow called");
     if (this->is_ready()) {
         this->do_update_();
         this->write_display_slow();
@@ -383,75 +425,60 @@ void HOT IT8951ESensor::draw_pixel_at(int x, int y, Color color) {
     display::DisplayBuffer::draw_pixel_at(x, y, color);
 }
 
-void IT8951ESensor::xdraw_pixels_at(int x_start, int y_start, int width, int height, const uint8_t *image,
-                                   display::ColorOrder color_order, display::ColorBitness bitness, bool big_endian,
-                                   int x_offset, int y_offset, int x_stride) {
-
-    if (bitness != display::COLOR_BITNESS_565 || color_order != display::COLOR_ORDER_RGB) {
+void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr,
+                                   display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
+                                   int x_offset, int y_offset, int x_pad) {
+    if (bitness != display::COLOR_BITNESS_565) {
         // Fallback to slow method if format is not what we expect from LVGL
-        display::DisplayBuffer::draw_pixels_at(x_start, y_start, width, height, image, color_order, bitness,
-                                               big_endian, x_offset, y_offset, x_stride);
-        return;
-    }
 
-    // Clip to display bounds
-    int x1 = std::max(0, x_start);
-    int y1 = std::max(0, y_start);
-    int x2 = std::min(this->get_width(), x_start + width);
-    int y2 = std::min(this->get_height(), y_start + height);
-
-    if (x1 >= x2 || y1 >= y2) {
+        ESP_LOGE(TAG, "Falling back to slow drawing method, as color bitness is not 565.");
+        display::DisplayBuffer::draw_pixels_at(x_start, y_start, w, h, ptr, order, bitness, big_endian, x_offset,
+                                               y_offset, x_pad);
         return;
     }
 
     // Update dirty area
-    if (this->min_x > x1) this->min_x = x1; // These are un-rotated coordinates
-    if (this->min_y > y1) this->min_y = y1;
-    if (this->max_x < x2 - 1) this->max_x = x2 - 1;
-    if (this->max_y < y2 - 1) this->max_y = y2 - 1;
+    if (this->min_x > x_start) this->min_x = x_start;
+    if (this->min_y > y_start) this->min_y = y_start;
+    if (this->max_x < x_start + w - 1) this->max_x = x_start + w - 1;
+    if (this->max_y < y_start + h - 1) this->max_y = y_start + h - 1;
 
-    const uint16_t *image16 = reinterpret_cast<const uint16_t *>(image);
-    const int image_stride = x_stride / 2;
+    const uint16_t panel_bytewidth = this->usPanelW_ >> 1;
+    size_t line_stride = x_offset + w + x_pad;  // length of each source line in pixels
 
-    for (int y = y1; y < y2; y++) {
-        for (int x = x1; x < x2; x++) {
-            int src_x = x - x_start + x_offset;
-            int src_y = y - y_start + y_offset;
-            uint16_t color16 = image16[src_y * image_stride + src_x];
+    for (int y = 0; y < h; y++) {
+        int dst_y = y_start + y;
+        const uint16_t *src_addr = (const uint16_t *)(ptr + (((y_offset + y) * line_stride) + x_offset) * 2);
+        uint8_t *dst_addr = this->buffer_ + (dst_y * panel_bytewidth) + (x_start / 2);
+
+        for (int x = 0; x < w; x += 2) {
+            // Process pixel 1 (even)
+            uint16_t color16_1 = src_addr[x];
             if (big_endian) {
-                color16 = __builtin_bswap16(color16);
+                color16_1 = __builtin_bswap16(color16_1);
+            }
+            uint8_t r1 = (color16_1 & 0xF800) >> 11;
+            uint8_t g1 = (color16_1 & 0x07E0) >> 5;
+            uint8_t b1 = (color16_1 & 0x001F);
+            // Convert to 4-bit grayscale, then threshold to black (0) or white (15)
+            uint8_t gray4_1 = ((r1 * 2126 + g1 * 7152 + b1 * 722) >> 12) > 7 ? 0xF : 0x0;
+
+            uint8_t gray4_2 = gray4_1; // Default for odd width
+            if (x + 1 < w) {
+                // Process pixel 2 (odd)
+                uint16_t color16_2 = src_addr[x + 1];
+                if (big_endian) {
+                    color16_2 = __builtin_bswap16(color16_2);
+                }
+                uint8_t r2 = (color16_2 & 0xF800) >> 11;
+                uint8_t g2 = (color16_2 & 0x07E0) >> 5;
+                uint8_t b2 = (color16_2 & 0x001F);
+                gray4_2 = ((r2 * 2126 + g2 * 7152 + b2 * 722) >> 12) > 7 ? 0xF : 0x0;
             }
 
-            // Convert 565 RGB to 8-bit grayscale
-            uint8_t r = (color16 & 0xF800) >> 8; // r is 5 bits, shift to top of 8 bits
-            uint8_t g = (color16 & 0x07E0) >> 3; // g is 6 bits, shift to top of 8 bits
-            uint8_t b = (color16 & 0x001F) << 3; // b is 5 bits, shift to top of 8 bits
-            uint8_t gray8 = (r * 77 + g * 150 + b * 29) >> 8;
-
-            // Convert 8-bit gray to 4-bit gray
-            uint8_t gray4bit = gray8 >> 4;
-
-            int rotated_x = x;
-            int rotated_y = y;
-
-            switch (this->rotation_) {
-                case display::DISPLAY_ROTATION_90_DEGREES:
-                    std::swap(rotated_x, rotated_y);
-                    rotated_x = this->get_width_internal() - rotated_x - 1;
-                    break;
-                case display::DISPLAY_ROTATION_180_DEGREES:
-                    rotated_x = this->get_width_internal() - rotated_x - 1;
-                    rotated_y = this->get_height_internal() - rotated_y - 1;
-                    break;
-                case display::DISPLAY_ROTATION_270_DEGREES:
-                    std::swap(rotated_x, rotated_y);
-                    rotated_y = this->get_height_internal() - rotated_y - 1;
-                    break;
-                case display::DISPLAY_ROTATION_0_DEGREES:
-                default:
-                    break;
-            }
-            this->draw_absolute_pixel_internal(rotated_x, rotated_y, Color(gray4bit));
+            // Combine two 4-bit pixels into one byte and write
+            *dst_addr = (gray4_1 << 4) | gray4_2;
+            dst_addr++;
         }
     }
     App.feed_wdt();

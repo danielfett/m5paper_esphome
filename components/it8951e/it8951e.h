@@ -144,9 +144,9 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
   void fill(Color color) override;
   void draw_pixel_at(int x, int y, Color color) override;
 
-  void xdraw_pixels_at(int x_start, int y_start, int width, int height, const uint8_t *image,
-                      display::ColorOrder color_order, display::ColorBitness bitness, bool big_endian,
-                      int x_offset, int y_offset, int x_stride);// override;
+  void draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr, display::ColorOrder order,
+                      display::ColorBitness bitness, bool big_endian, int x_offset = 0, int y_offset = 0,
+                      int x_pad = 0) override;
  protected:
   void draw_absolute_pixel_internal(int x, int y, Color color) override;
 
@@ -185,7 +185,7 @@ shown in Figure 1. The use of a white image in the transition from 4-bit to
   int usPanelH_{0};
   bool reversed_{false};
   uint32_t reset_duration_{100};
-  bool sleep_when_done_{true}; // If true, the display will go to sleep after each update
+  bool sleep_when_done_{false}; // If true, the display will go to sleep after each update
   enum it8951eModel model_{it8951eModel::M5EPD};
 
   void reset(void);
