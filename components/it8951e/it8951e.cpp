@@ -306,7 +306,7 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
     for (uint32_t row = 0; row < h; ++row) {
         uint32_t buf_start_index = (y + row) * panel_bytewidth + (x >> 1);
         memcpy(row_buffer, &gram[buf_start_index], gram_bytewidth);
-        if (!this->reversed_) {
+        if (this->reversed_) {
             for(uint16_t i = 0; i < gram_bytewidth; i++) row_buffer[i] = 0xFF - row_buffer[i];
         }
         this->transfer_array(row_buffer, gram_bytewidth);
@@ -439,6 +439,9 @@ void HOT IT8951ESensor::draw_pixel_at(int x, int y, Color color) {
 void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const uint8_t *ptr,
                                    display::ColorOrder order, display::ColorBitness bitness, bool big_endian,
                                    int x_offset, int y_offset, int x_pad) {
+
+    ESP_LOGV(TAG, "draw_pixels_at called, x_start=%d, y_start=%d, w=%d, h=%d, x_offset=%d, y_offset=%d, x_pad=%d", x_start, y_start, w, h, x_offset, y_offset, x_pad);
+
     if (bitness != display::COLOR_BITNESS_565) {
         // Fallback to slow method if format is not what we expect from LVGL
 
@@ -458,9 +461,8 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
     size_t line_stride = x_offset + w + x_pad;  // length of each source line in pixels
 
     for (int y = 0; y < h; y++) {
-        int dst_y = y_start + y;
         const uint16_t *src_addr = (const uint16_t *)(ptr + (((y_offset + y) * line_stride) + x_offset) * 2);
-        uint8_t *dst_addr = this->buffer_ + (dst_y * panel_bytewidth) + (x_start / 2);
+        uint8_t *dst_addr = this->buffer_ + ((y_start + y) * panel_bytewidth) + (x_start / 2);
 
         for (int x = 0; x < w; x += 2) {
             // Process pixel 1 (even)
@@ -469,7 +471,7 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
                 color16_1 = __builtin_bswap16(color16_1);
             }
             uint16_t lum = R_LUMINANCE_LUT[(color16_1 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color16_1 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color16_1 & 0x001F];
-            uint8_t gray4_1 = (lum >> 12) > 7 ? 0xF : 0x0;
+            uint8_t gray4_1 = (lum >> 12) > 7 ? 0x0 : 0xF;
 
             uint8_t gray4_2 = gray4_1; // Default for odd width
             if (x + 1 < w) {
@@ -479,7 +481,7 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
                     color16_2 = __builtin_bswap16(color16_2);
                 }
                 lum = R_LUMINANCE_LUT[(color16_2 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color16_2 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color16_2 & 0x001F];
-                gray4_2 = (lum >> 12) > 7 ? 0xF : 0x0;
+                gray4_2 = (lum >> 12) > 7 ? 0x0 : 0xF;
             }
 
             // Combine two 4-bit pixels into one byte and write
