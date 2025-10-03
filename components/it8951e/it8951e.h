@@ -14,6 +14,8 @@ enum it8951eModel
   it8951eModelsEND // MUST be last
 };
 
+const uint16_t DEFAULT_VCOM = 2100;  // -2.30V
+
 #if ESPHOME_VERSION_CODE >= VERSION_CODE(2023, 12, 0)
 class IT8951ESensor : public display::DisplayBuffer,
 #else

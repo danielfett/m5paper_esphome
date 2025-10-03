@@ -251,8 +251,8 @@ void IT8951ESensor::setup() {
 
     // set vcom to -2.30v
     const uint16_t vcom = this->get_vcom();
-    if (2300 != vcom) {
-        this->set_vcom(2300);
+    if (DEFAULT_VCOM != vcom) {
+        this->set_vcom(DEFAULT_VCOM);
         this->get_vcom();
     }
 
@@ -269,7 +269,7 @@ void IT8951ESensor::setup() {
  * @param h height of update area
  * @param buffer 4bpp buffer data
  */
-void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
+void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w, // NOLINT
                                             uint16_t h) {
 
     ESP_LOGV(TAG, "Writing buffer to display; x=%d, y=%d, w=%d, h=%d", x, y, w, h);
@@ -292,8 +292,6 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
 
     const uint16_t panel_bytewidth = this->usPanelW_ >> 1; // bytes per row on the panel (2 pixels per byte)
     const uint16_t update_bytewidth = w >> 1; // bytes per row for the update area
-
-    ESP_LOGV(TAG, "---- writing in rows of length: %d bytes", update_bytewidth);
 
     this->enable();
     /* Send data preamble */
@@ -319,7 +317,6 @@ void IT8951ESensor::write_buffer_to_display(uint16_t x, uint16_t y, uint16_t w,
         this->transfer_array(row_buffer, update_bytewidth);
     }
 
-    allocator.deallocate(row_buffer, update_bytewidth);
     this->disable();
 
     this->write_command(IT8951_TCON_LD_IMG_END);
@@ -475,13 +472,13 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
             for (int x = 0; x < w; x += 2) {
                 uint16_t color1 = __builtin_bswap16(src_addr[x]);
                 uint16_t lum1 = R_LUMINANCE_LUT[(color1 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color1 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color1 & 0x001F];
-                uint8_t gray1 = (lum1 >> 12) > 7 ? 0x0 : 0xF;
+                uint8_t gray1 = (lum1 >> 12) > 7 ? 0xF : 0x0;
 
                 uint8_t gray2 = gray1;
                 if (x + 1 < w) {
                     uint16_t color2 = __builtin_bswap16(src_addr[x + 1]);
                     uint16_t lum2 = R_LUMINANCE_LUT[(color2 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color2 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color2 & 0x001F];
-                    gray2 = (lum2 >> 12) > 7 ? 0x0 : 0xF;
+                    gray2 = (lum2 >> 12) > 7 ? 0xF : 0x0;
                 }
                 *dst_addr++ = (gray1 << 4) | gray2;
             }
@@ -493,13 +490,13 @@ void IT8951ESensor::draw_pixels_at(int x_start, int y_start, int w, int h, const
             for (int x = 0; x < w; x += 2) {
                 uint16_t color1 = src_addr[x];
                 uint16_t lum1 = R_LUMINANCE_LUT[(color1 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color1 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color1 & 0x001F];
-                uint8_t gray1 = (lum1 >> 12) > 7 ? 0x0 : 0xF;
+                uint8_t gray1 = (lum1 >> 12) > 7 ? 0xF : 0x0;
 
                 uint8_t gray2 = gray1;
                 if (x + 1 < w) {
                     uint16_t color2 = src_addr[x + 1];
                     uint16_t lum2 = R_LUMINANCE_LUT[(color2 & 0xF800) >> 11] + G_LUMINANCE_LUT[(color2 & 0x07E0) >> 5] + B_LUMINANCE_LUT[color2 & 0x001F];
-                    gray2 = (lum2 >> 12) > 7 ? 0x0 : 0xF;
+                    gray2 = (lum2 >> 12) > 7 ? 0xF : 0x0;
                 }
                 *dst_addr++ = (gray1 << 4) | gray2;
             }
